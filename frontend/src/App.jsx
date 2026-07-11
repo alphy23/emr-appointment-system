@@ -6,6 +6,7 @@ import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import SchedulerPage from "./pages/SchedulerPage";
 import DoctorScheduleFormPage from "./pages/DoctorScheduleFormPage";
+import AppointmentsPage from "./pages/AppointmentsPage";
 
 const queryClient = new QueryClient();
 
@@ -40,6 +41,15 @@ function App() {
                 path="/doctor-schedules"
                 element={<DoctorScheduleFormPage />}
               />
+            </Route>
+            <Route
+              element={
+                <ProtectedRoute
+                  allowedRoles={["superadmin", "receptionist", "doctor"]}
+                />
+              }
+            >
+              <Route path="/appointments" element={<AppointmentsPage />} />
             </Route>
           </Routes>
         </BrowserRouter>

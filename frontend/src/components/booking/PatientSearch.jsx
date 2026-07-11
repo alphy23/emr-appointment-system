@@ -2,17 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { searchPatientsRequest } from "../../api/patient.api";
 import Input from "../common/Input";
-
-const useDebouncedValue = (value, delay = 400) => {
-  const [debounced, setDebounced] = useState(value);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setDebounced(value), delay);
-    return () => clearTimeout(timer);
-  }, [value, delay]);
-
-  return debounced;
-};
+import useDebouncedValue from "../../hooks/useDebouncedValue";
 
 const PatientSearch = ({ onSelectPatient, selectedPatient }) => {
   const [query, setQuery] = useState("");
