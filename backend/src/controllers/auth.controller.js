@@ -1,6 +1,7 @@
 const asyncHandler = require("../utils/asyncHandler");
 const ApiResponse = require("../utils/ApiResponse");
 const authService = require("../services/auth.service");
+const User = require("../models/User");
 
 const REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
@@ -41,4 +42,9 @@ const logout = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(true, "Logged out successfully"));
 });
 
-module.exports = { login, refresh, logout };
+const getMe = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user.id).select("name email role");
+  res.status(200).json(new ApiResponse(true, "Current user fetched", user));
+});
+
+module.exports = { login, refresh, logout, getMe  };
