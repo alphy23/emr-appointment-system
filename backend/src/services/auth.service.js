@@ -3,6 +3,7 @@ const User = require("../models/User");
 const RefreshToken = require("../models/RefreshToken");
 const ApiError = require("../utils/ApiError");
 const { generateAccessToken, generateRefreshToken } = require("../utils/token");
+const auditLogService = require("./auditLog.service");
 
 const msFromExpiry = (expiry) => {
   // Converts "7d" / "15m" style strings to milliseconds for cookie maxAge
@@ -13,7 +14,9 @@ const msFromExpiry = (expiry) => {
 };
 
 const login = async (email, password) => {
-  const user = await User.findOne({ email, isActive: true }).select("+password");
+  const user = await User.findOne({ email, isActive: true }).select(
+    "+password",
+  );
   if (!user) throw new ApiError(401, "Invalid email or password");
 
   const isMatch = await user.comparePassword(password);
@@ -25,7 +28,18 @@ const login = async (email, password) => {
   await RefreshToken.create({
     user: user._id,
     token: refreshToken,
-    expiresAt: new Date(Date.now() + msFromExpiry(process.env.JWT_REFRESH_EXPIRY)),
+    expiresAt: new Date(
+      Date.now() + msFromExpiry(process.env.JWT_REFRESH_EXPIRY),
+    ),
+  });
+
+  // Fire-and-forget: don't let logging failures block a successful login
+  auditLogService.log({
+    user: user._id,
+    role: user.role,
+    action: "LOGIN",
+    entity: "User",
+    entityId: user._id,
   });
 
   return {
@@ -69,7 +83,9 @@ const refresh = async (incomingToken) => {
   await RefreshToken.create({
     user: user._id,
     token: newRefreshToken,
-    expiresAt: new Date(Date.now() + msFromExpiry(process.env.JWT_REFRESH_EXPIRY)),
+    expiresAt: new Date(
+      Date.now() + msFromExpiry(process.env.JWT_REFRESH_EXPIRY),
+    ),
   });
 
   return { accessToken: newAccessToken, refreshToken: newRefreshToken };
@@ -79,7 +95,7 @@ const logout = async (incomingToken) => {
   if (!incomingToken) return;
   await RefreshToken.updateOne(
     { token: incomingToken },
-    { $set: { revoked: true } }
+    { $set: { revoked: true } },
   );
 };
 

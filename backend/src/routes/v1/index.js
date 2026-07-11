@@ -7,5 +7,6 @@ router.use("/receptionists", require("./receptionist.routes"));
 router.use("/slots", require("./slot.routes"));
 router.use("/patients", require("./patient.routes"));
 router.use("/appointments", require("./appointment.routes"));
+router.use("/audit-logs", require("./auditLog.routes"));
 
 module.exports = router;

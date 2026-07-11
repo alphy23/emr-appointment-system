@@ -9,6 +9,7 @@ const ApiError = require("../utils/ApiError");
 const auditLogService = require("./auditLog.service");
 const Doctor = require("../models/Doctor");
 const Patient = require("../models/Patient");
+const { emitAppointmentEvent } = require("../sockets/appointment.socket");
 
 // Defines which status transitions are legal. Anything not listed here is rejected.
 const ALLOWED_TRANSITIONS = {
@@ -23,7 +24,7 @@ const assertTransitionAllowed = (currentStatus, nextStatus) => {
   if (!allowed.includes(nextStatus)) {
     throw new ApiError(
       400,
-      `Cannot change appointment status from "${currentStatus}" to "${nextStatus}"`
+      `Cannot change appointment status from "${currentStatus}" to "${nextStatus}"`,
     );
   }
 };
@@ -32,7 +33,10 @@ const assertTransitionAllowed = (currentStatus, nextStatus) => {
 const assertDoctorOwnsAppointment = async (appointment, actor) => {
   if (actor.role !== "doctor") return;
   const doctorProfile = await Doctor.findOne({ user: actor.id });
-  if (!doctorProfile || String(appointment.doctor) !== String(doctorProfile._id)) {
+  if (
+    !doctorProfile ||
+    String(appointment.doctor) !== String(doctorProfile._id)
+  ) {
     throw new ApiError(403, "You can only manage your own appointments");
   }
 };
@@ -47,7 +51,10 @@ const updateAppointment = async (id, updates, actor) => {
   if (!appointment) throw new ApiError(404, "Appointment not found");
 
   if (["Completed", "Cancelled"].includes(appointment.status)) {
-    throw new ApiError(400, `Cannot edit a ${appointment.status.toLowerCase()} appointment`);
+    throw new ApiError(
+      400,
+      `Cannot edit a ${appointment.status.toLowerCase()} appointment`,
+    );
   }
 
   await assertDoctorOwnsAppointment(appointment, actor);
@@ -73,7 +80,9 @@ const updateAppointment = async (id, updates, actor) => {
     meta: updates,
   });
 
-  return appointment.populate(["doctor", "patient"]);
+  const populated = await appointment.populate(["doctor", "patient"]);
+  emitAppointmentEvent("appointment:updated", populated);
+  return populated;
 };
 
 const markArrived = async (id, actor) => {
@@ -93,7 +102,9 @@ const markArrived = async (id, actor) => {
     entityId: appointment._id,
   });
 
-  return appointment.populate(["doctor", "patient"]);
+  const populated = await appointment.populate(["doctor", "patient"]);
+  emitAppointmentEvent("appointment:updated", populated);
+  return populated;
 };
 
 const completeAppointment = async (id, actor) => {
@@ -114,7 +125,9 @@ const completeAppointment = async (id, actor) => {
     entityId: appointment._id,
   });
 
-  return appointment.populate(["doctor", "patient"]);
+  const populated = await appointment.populate(["doctor", "patient"]);
+  emitAppointmentEvent("appointment:updated", populated);
+  return populated;
 };
 
 const cancelAppointment = async (id, reason, actor) => {
@@ -138,14 +151,22 @@ const cancelAppointment = async (id, reason, actor) => {
     meta: { reason },
   });
 
-  return appointment.populate(["doctor", "patient"]);
+  const populated = await appointment.populate(["doctor", "patient"]);
+  emitAppointmentEvent("appointment:cancelled", populated);
+  return populated;
 };
 
 // Confirms the requested slot is actually a real slot generated from the
 // doctor's current schedule — prevents booking arbitrary/fabricated times
 // that don't align with sessions, duration, or break periods.
-const assertSlotIsValid = async (doctorId, date, slotStartTime, slotEndTime) => {
-  if (isPastDate(date)) throw new ApiError(400, "Cannot book an appointment on a past date");
+const assertSlotIsValid = async (
+  doctorId,
+  date,
+  slotStartTime,
+  slotEndTime,
+) => {
+  if (isPastDate(date))
+    throw new ApiError(400, "Cannot book an appointment on a past date");
 
   const schedule = await scheduleService.getScheduleByDoctor(doctorId);
   const dayName = getDayName(date);
@@ -153,11 +174,19 @@ const assertSlotIsValid = async (doctorId, date, slotStartTime, slotEndTime) => 
     throw new ApiError(400, "Doctor does not work on this day");
   }
 
-  const validSlots = generateSlots(schedule.sessions, schedule.breaks, schedule.slotDuration);
-  const matches = validSlots.some(
-    (s) => s.startTime === slotStartTime && s.endTime === slotEndTime
+  const validSlots = generateSlots(
+    schedule.sessions,
+    schedule.breaks,
+    schedule.slotDuration,
   );
-  if (!matches) throw new ApiError(400, "Requested slot is not a valid slot for this doctor");
+  const matches = validSlots.some(
+    (s) => s.startTime === slotStartTime && s.endTime === slotEndTime,
+  );
+  if (!matches)
+    throw new ApiError(
+      400,
+      "Requested slot is not a valid slot for this doctor",
+    );
 
   const isToday = date === getTodayStr();
   if (isToday) {
@@ -169,8 +198,16 @@ const assertSlotIsValid = async (doctorId, date, slotStartTime, slotEndTime) => 
 };
 
 const createAppointment = async (payload, actor) => {
-  const { doctorId, department, date, slotStartTime, slotEndTime, purpose, patientId, newPatient } =
-    payload;
+  const {
+    doctorId,
+    department,
+    date,
+    slotStartTime,
+    slotEndTime,
+    purpose,
+    patientId,
+    newPatient,
+  } = payload;
 
   await assertSlotIsValid(doctorId, date, slotStartTime, slotEndTime);
 
@@ -180,7 +217,7 @@ const createAppointment = async (payload, actor) => {
   try {
     const patient = await patientService.findOrCreatePatient(
       { patientId, newPatientData: newPatient },
-      session
+      session,
     );
 
     // The unique partial index on the Appointment model is what actually
@@ -201,7 +238,7 @@ const createAppointment = async (payload, actor) => {
           createdBy: actor.id,
         },
       ],
-      { session }
+      { session },
     );
 
     await session.commitTransaction();
@@ -215,21 +252,29 @@ const createAppointment = async (payload, actor) => {
       entityId: appointment._id,
     });
 
-    return appointment.populate(["doctor", "patient"]);
+    const populated = await appointment.populate(["doctor", "patient"]);
+    emitAppointmentEvent("appointment:created", populated);
+    return populated;
   } catch (err) {
     await session.abortTransaction();
     session.endSession();
 
     // MongoDB duplicate key error → this slot was just taken by another request
     if (err.code === 11000) {
-      throw new ApiError(409, "This slot has just been booked by someone else. Please choose another slot.");
+      throw new ApiError(
+        409,
+        "This slot has just been booked by someone else. Please choose another slot.",
+      );
     }
     throw err;
   }
 };
 
 const getAppointmentById = async (id) => {
-  const appointment = await Appointment.findById(id).populate(["doctor", "patient"]);
+  const appointment = await Appointment.findById(id).populate([
+    "doctor",
+    "patient",
+  ]);
   if (!appointment) throw new ApiError(404, "Appointment not found");
   return appointment;
 };
@@ -241,13 +286,26 @@ const getAppointmentById = async (id) => {
  * so there's no way to bypass this by manipulating query params.
  */
 const listAppointments = async (query, actor) => {
-  const { doctorId, department, status, dateFrom, dateTo, search, page, limit, sortBy, sortOrder } = query;
+  const {
+    doctorId,
+    department,
+    status,
+    dateFrom,
+    dateTo,
+    search,
+    page,
+    limit,
+    sortBy,
+    sortOrder,
+  } = query;
 
   const filter = {};
 
   // --- RBAC scoping ---
   if (actor.role === "doctor") {
-    const doctorProfile = await Doctor.findOne({ user: actor.id }).select("_id");
+    const doctorProfile = await Doctor.findOne({ user: actor.id }).select(
+      "_id",
+    );
     if (!doctorProfile) throw new ApiError(403, "Doctor profile not found");
     filter.doctor = doctorProfile._id; // doctor can NEVER see other doctors' appointments
   } else if (doctorId) {
@@ -274,7 +332,10 @@ const listAppointments = async (query, actor) => {
 
     const patientIds = matchingPatients.map((p) => p._id);
     if (patientIds.length === 0) {
-      return { appointments: [], meta: { total: 0, page, limit, totalPages: 0 } };
+      return {
+        appointments: [],
+        meta: { total: 0, page, limit, totalPages: 0 },
+      };
     }
     filter.patient = { $in: patientIds };
   }

@@ -22,6 +22,13 @@ router.post(
   appointmentController.createAppointment
 );
 
+router.get(
+  "/",
+  authorize("superadmin", "receptionist", "doctor"),
+  validateQuery(listAppointmentsSchema),
+  appointmentController.listAppointments
+);
+
 router.get("/:id", appointmentController.getAppointment);
 
 router.put(
@@ -48,13 +55,6 @@ router.delete(
   authorize("superadmin", "receptionist"),
   validate(cancelAppointmentSchema),
   appointmentController.cancelAppointment
-);
-
-router.get(
-  "/",
-  authorize("superadmin", "receptionist", "doctor"),
-  validateQuery(listAppointmentsSchema),
-  appointmentController.listAppointments
 );
 
 module.exports = router;
