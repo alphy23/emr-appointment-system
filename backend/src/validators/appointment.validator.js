@@ -27,4 +27,35 @@ const createAppointmentSchema = z
     path: ["patientId"],
   });
 
-module.exports = { createAppointmentSchema };
+  const updateAppointmentSchema = z
+  .object({
+    purpose: z.string().optional(),
+    notes: z.string().optional(),
+  })
+  .refine((data) => data.purpose !== undefined || data.notes !== undefined, {
+    message: "At least one of purpose or notes must be provided",
+  });
+
+const cancelAppointmentSchema = z.object({
+  reason: z.string().min(3, "Cancellation reason is required"),
+});
+
+const listAppointmentsSchema = z.object({
+  doctorId: z.string().optional(),
+  department: z.string().optional(),
+  status: z.enum(["Scheduled", "Arrived", "Completed", "Cancelled"]).optional(),
+  dateFrom: z.string().regex(dateRegex).optional(),
+  dateTo: z.string().regex(dateRegex).optional(),
+  search: z.string().optional(), // matches patient name or mobile
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+  sortBy: z.enum(["date", "createdAt", "status"]).default("date"),
+  sortOrder: z.enum(["asc", "desc"]).default("desc"),
+});
+
+module.exports = {
+  createAppointmentSchema,
+  updateAppointmentSchema,
+  cancelAppointmentSchema,
+  listAppointmentsSchema,
+};

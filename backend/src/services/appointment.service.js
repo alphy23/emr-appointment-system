@@ -7,6 +7,139 @@ const { getDayName, getTodayStr, isPastDate } = require("../utils/date");
 const { timeToMinutes } = require("../utils/time");
 const ApiError = require("../utils/ApiError");
 const auditLogService = require("./auditLog.service");
+const Doctor = require("../models/Doctor");
+const Patient = require("../models/Patient");
+
+// Defines which status transitions are legal. Anything not listed here is rejected.
+const ALLOWED_TRANSITIONS = {
+  Scheduled: ["Arrived", "Cancelled"],
+  Arrived: ["Completed", "Cancelled"],
+  Completed: [], // terminal
+  Cancelled: [], // terminal
+};
+
+const assertTransitionAllowed = (currentStatus, nextStatus) => {
+  const allowed = ALLOWED_TRANSITIONS[currentStatus] || [];
+  if (!allowed.includes(nextStatus)) {
+    throw new ApiError(
+      400,
+      `Cannot change appointment status from "${currentStatus}" to "${nextStatus}"`
+    );
+  }
+};
+
+// Doctors can only act on their own appointments — resolves Doctor doc from the User id
+const assertDoctorOwnsAppointment = async (appointment, actor) => {
+  if (actor.role !== "doctor") return;
+  const doctorProfile = await Doctor.findOne({ user: actor.id });
+  if (!doctorProfile || String(appointment.doctor) !== String(doctorProfile._id)) {
+    throw new ApiError(403, "You can only manage your own appointments");
+  }
+};
+
+/**
+ * Updates purpose/notes. Field-level permission:
+ * - Receptionist / Super Admin: can update purpose and notes
+ * - Doctor: can update notes only, and only on their own appointment
+ */
+const updateAppointment = async (id, updates, actor) => {
+  const appointment = await Appointment.findById(id);
+  if (!appointment) throw new ApiError(404, "Appointment not found");
+
+  if (["Completed", "Cancelled"].includes(appointment.status)) {
+    throw new ApiError(400, `Cannot edit a ${appointment.status.toLowerCase()} appointment`);
+  }
+
+  await assertDoctorOwnsAppointment(appointment, actor);
+
+  if (actor.role === "doctor") {
+    if (updates.purpose !== undefined) {
+      throw new ApiError(403, "Doctors can only update consultation notes");
+    }
+    if (updates.notes !== undefined) appointment.notes = updates.notes;
+  } else {
+    if (updates.purpose !== undefined) appointment.purpose = updates.purpose;
+    if (updates.notes !== undefined) appointment.notes = updates.notes;
+  }
+
+  await appointment.save();
+
+  await auditLogService.log({
+    user: actor.id,
+    role: actor.role,
+    action: "APPOINTMENT_UPDATED",
+    entity: "Appointment",
+    entityId: appointment._id,
+    meta: updates,
+  });
+
+  return appointment.populate(["doctor", "patient"]);
+};
+
+const markArrived = async (id, actor) => {
+  const appointment = await Appointment.findById(id);
+  if (!appointment) throw new ApiError(404, "Appointment not found");
+
+  assertTransitionAllowed(appointment.status, "Arrived");
+
+  appointment.status = "Arrived";
+  await appointment.save();
+
+  await auditLogService.log({
+    user: actor.id,
+    role: actor.role,
+    action: "APPOINTMENT_ARRIVED",
+    entity: "Appointment",
+    entityId: appointment._id,
+  });
+
+  return appointment.populate(["doctor", "patient"]);
+};
+
+const completeAppointment = async (id, actor) => {
+  const appointment = await Appointment.findById(id);
+  if (!appointment) throw new ApiError(404, "Appointment not found");
+
+  await assertDoctorOwnsAppointment(appointment, actor);
+  assertTransitionAllowed(appointment.status, "Completed");
+
+  appointment.status = "Completed";
+  await appointment.save();
+
+  await auditLogService.log({
+    user: actor.id,
+    role: actor.role,
+    action: "APPOINTMENT_COMPLETED",
+    entity: "Appointment",
+    entityId: appointment._id,
+  });
+
+  return appointment.populate(["doctor", "patient"]);
+};
+
+const cancelAppointment = async (id, reason, actor) => {
+  const appointment = await Appointment.findById(id);
+  if (!appointment) throw new ApiError(404, "Appointment not found");
+
+  assertTransitionAllowed(appointment.status, "Cancelled");
+
+  appointment.status = "Cancelled";
+  appointment.cancelReason = reason;
+  await appointment.save();
+  // Note: the unique partial index only counts Scheduled/Arrived/Completed —
+  // so this same slot becomes bookable again immediately after cancellation.
+
+  await auditLogService.log({
+    user: actor.id,
+    role: actor.role,
+    action: "APPOINTMENT_CANCELLED",
+    entity: "Appointment",
+    entityId: appointment._id,
+    meta: { reason },
+  });
+
+  return appointment.populate(["doctor", "patient"]);
+};
 
 // Confirms the requested slot is actually a real slot generated from the
 // doctor's current schedule — prevents booking arbitrary/fabricated times
@@ -101,4 +234,85 @@ const getAppointmentById = async (id) => {
   return appointment;
 };
 
-module.exports = { createAppointment, getAppointmentById };
+/**
+ * Server-side filtering, sorting, and pagination for the appointment list.
+ * RBAC scoping happens here, not in the controller — a Doctor's query is
+ * forcibly narrowed to their own appointments regardless of what they pass in,
+ * so there's no way to bypass this by manipulating query params.
+ */
+const listAppointments = async (query, actor) => {
+  const { doctorId, department, status, dateFrom, dateTo, search, page, limit, sortBy, sortOrder } = query;
+
+  const filter = {};
+
+  // --- RBAC scoping ---
+  if (actor.role === "doctor") {
+    const doctorProfile = await Doctor.findOne({ user: actor.id }).select("_id");
+    if (!doctorProfile) throw new ApiError(403, "Doctor profile not found");
+    filter.doctor = doctorProfile._id; // doctor can NEVER see other doctors' appointments
+  } else if (doctorId) {
+    filter.doctor = doctorId; // superadmin/receptionist may optionally filter by doctor
+  }
+
+  if (department) filter.department = department;
+  if (status) filter.status = status;
+
+  if (dateFrom || dateTo) {
+    filter.date = {};
+    if (dateFrom) filter.date.$gte = dateFrom;
+    if (dateTo) filter.date.$lte = dateTo;
+  }
+
+  // Patient search (name or mobile) requires resolving patient IDs first,
+  // since Appointment only stores a patient reference, not the name/mobile itself.
+  // Avoided a $lookup aggregation here for simplicity — fine at this data volume,
+  // documented as a scaling tradeoff in ENGINEERING_DECISIONS.md.
+  if (search) {
+    const matchingPatients = await Patient.find({
+      $or: [{ name: { $regex: search, $options: "i" } }, { mobile: search }],
+    }).select("_id");
+
+    const patientIds = matchingPatients.map((p) => p._id);
+    if (patientIds.length === 0) {
+      return { appointments: [], meta: { total: 0, page, limit, totalPages: 0 } };
+    }
+    filter.patient = { $in: patientIds };
+  }
+
+  const sortDirection = sortOrder === "asc" ? 1 : -1;
+  const sort = { [sortBy]: sortDirection };
+
+  const skip = (page - 1) * limit;
+
+  // Run count + fetch in parallel — avoids a second round trip delay
+  const [appointments, total] = await Promise.all([
+    Appointment.find(filter)
+      .populate("doctor", "name department")
+      .populate("patient", "name mobile")
+      .sort(sort)
+      .skip(skip)
+      .limit(limit)
+      .lean(), // lean() skips Mongoose document overhead — read-only list, no need for it
+    Appointment.countDocuments(filter),
+  ]);
+
+  return {
+    appointments,
+    meta: {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+};
+
+module.exports = {
+  createAppointment,
+  getAppointmentById,
+  updateAppointment,
+  markArrived,
+  completeAppointment,
+  cancelAppointment,
+  listAppointments,
+};
