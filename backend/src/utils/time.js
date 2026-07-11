@@ -4,4 +4,10 @@ const timeToMinutes = (time) => {
   return h * 60 + m;
 };
 
-module.exports = { timeToMinutes };
+const minutesToTime = (mins) => {
+  const h = Math.floor(mins / 60).toString().padStart(2, "0");
+  const m = (mins % 60).toString().padStart(2, "0");
+  return `${h}:${m}`;
+};
+
+module.exports = { timeToMinutes, minutesToTime };
