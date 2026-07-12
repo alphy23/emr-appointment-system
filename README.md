@@ -23,6 +23,31 @@ Medical Record (EMR) system, built on the MERN stack (MongoDB, Express, React, N
 
 ---
 
+## Live Demo
+
+- **Frontend:** https://emr-appointment-system-rose.vercel.app
+- **Backend API:** https://emr-backend-l0pa.onrender.com/api/v1
+
+> Note: the backend is hosted on Render's free tier, which spins down after
+> 15 minutes of inactivity. The first request after idling may take 30–60
+> seconds to respond while the service wakes up — subsequent requests are fast.
+
+## Demo Credentials
+
+| Role | Email | Password |
+|---|---|---|
+| Super Admin | admin@emr.com | Admin@123 |
+| Receptionist | priya@emr.com | Reception@123 |
+| Doctor | anu@emr.com | Doctor@123 |
+
+Doctor "Dr. Anu Nair" (Cardiology) already has a working schedule configured
+(Mon–Fri, 09:00–12:00 & 13:00–17:00, 15-minute slots), so slots are
+immediately bookable without any manual setup. Sample patients ("Ravi Kumar",
+"Meena Pillai") are also pre-seeded for testing the existing-patient search
+during booking.
+
+---
+
 ## Project Overview
 
 This system supports three roles — **Super Admin**, **Receptionist**, and **Doctor** —
@@ -332,17 +357,6 @@ VITE_SOCKET_URL=http://localhost:5000
 
 ## Installation Instructions
 
-
-node src/scripts/seedDemoData.js   # or: npm run seed
-
-## Demo Credentials
-
-| Role | Email | Password |
-|---|---|---|
-| Super Admin | admin@emr.com | Admin@123 |
-| Receptionist | priya@emr.com | Reception@123 |
-| Doctor | anu@emr.com | Doctor@123 |
-
 ```bash
 git clone <repository-url>
 cd emr-appointment-system
@@ -351,7 +365,7 @@ cd emr-appointment-system
 cd backend
 npm install
 cp .env.example .env    # then fill in real values
-node src/scripts/seedSuperAdmin.js   # creates admin@emr.com / Admin@123
+npm run seed            # creates Super Admin, Receptionist, Doctor + Schedule, sample Patients
 
 # Frontend
 cd ../frontend
