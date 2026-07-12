@@ -1,15 +1,13 @@
 import { useAuth } from "../context/AuthContext";
-import Button from "../components/common/Button";
 
 const DashboardPage = () => {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
 
   return (
     <div className="p-8">
-      <h1 className="text-xl font-semibold">Welcome, {user?.name} ({user?.role})</h1>
-      <Button variant="secondary" onClick={logout} className="mt-4">
-        Logout
-      </Button>
+      <h1 className="text-xl font-semibold text-gray-800">
+        Welcome, {user?.name} <span className="text-gray-500 font-normal">({user?.role})</span>
+      </h1>
     </div>
   );
 };

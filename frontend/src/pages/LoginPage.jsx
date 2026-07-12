@@ -24,20 +24,17 @@ const LoginPage = () => {
   } = useForm({ resolver: zodResolver(loginSchema) });
 
   const onSubmit = async (data) => {
-    setServerError("");
-    setIsSubmitting(true);
-    try {
-      const user = await login(data.email, data.password);
-      // Route by role right after login — each role lands on a relevant view
-      if (user.role === "superadmin") navigate("/dashboard");
-      else if (user.role === "receptionist") navigate("/scheduler");
-      else navigate("/my-appointments");
-    } catch (err) {
-      setServerError(err.response?.data?.message || "Login failed. Please try again.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+  setServerError("");
+  setIsSubmitting(true);
+  try {
+    const user = await login(data.email, data.password);
+    navigate("/dashboard");
+  } catch (err) {
+    setServerError(err.response?.data?.message || "Login failed. Please try again.");
+  } finally {
+    setIsSubmitting(false);
+  }
+};
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">

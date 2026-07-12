@@ -332,6 +332,17 @@ VITE_SOCKET_URL=http://localhost:5000
 
 ## Installation Instructions
 
+
+node src/scripts/seedDemoData.js   # or: npm run seed
+
+## Demo Credentials
+
+| Role | Email | Password |
+|---|---|---|
+| Super Admin | admin@emr.com | Admin@123 |
+| Receptionist | priya@emr.com | Reception@123 |
+| Doctor | anu@emr.com | Doctor@123 |
+
 ```bash
 git clone <repository-url>
 cd emr-appointment-system
